@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>LM Studio Chat</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <div class="app">
+      <aside class="sidebar">
+        <div class="sidebar-header">
+          <h1>Chats</h1>
+          <button id="new-chat-btn" class="primary">+ New</button>
+        </div>
+        <ul id="conversation-list" class="conversation-list"></ul>
+        <div class="sidebar-footer">
+          <button id="delete-chat-btn" class="danger">Delete Current</button>
+          <button id="clear-all-btn">Clear All</button>
+        </div>
+      </aside>
+
+      <main class="main">
+        <section class="config">
+          <div class="config-row">
+            <label for="base-url">Base URL</label>
+            <input id="base-url" type="text" placeholder="http://localhost:1234/v1" />
+          </div>
+          <div class="config-row">
+            <label for="model">Model</label>
+            <div class="model-row">
+              <input id="model" type="text" placeholder="モデル名 (例: local-model)" />
+              <button id="load-models-btn">Load Models</button>
+            </div>
+            <select id="models-select">
+              <option value="">モデルを選択（任意）</option>
+            </select>
+          </div>
+          <div class="config-row">
+            <label for="system-prompt">System Prompt</label>
+            <textarea id="system-prompt" rows="2" placeholder="必要ならシステムプロンプトを入力"></textarea>
+          </div>
+          <div id="status" class="status"></div>
+        </section>
+
+        <section id="messages" class="messages"></section>
+
+        <form id="chat-form" class="chat-form">
+          <textarea
+            id="user-input"
+            rows="3"
+            placeholder="メッセージを入力... (Shift+Enterで改行)"
+            required
+          ></textarea>
+          <button id="send-btn" type="submit" class="primary">Send</button>
+        </form>
+      </main>
+    </div>
+
+    <template id="message-template">
+      <article class="message">
+        <header></header>
+        <div class="message-body"></div>
+      </article>
+    </template>
+
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/dompurify@3.2.6/dist/purify.min.js"></script>
+    <script src="app.js"></script>
+  </body>
+</html>
