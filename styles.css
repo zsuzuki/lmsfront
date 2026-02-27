@@ -267,6 +267,32 @@ select {
   background: #233e68;
 }
 
+.message-body .think-block {
+  margin: 0.65em 0;
+  border: 1px solid #35598f;
+  border-radius: 8px;
+  background: #132947;
+}
+
+.message-body .think-block > summary {
+  cursor: pointer;
+  color: #9bccff;
+  padding: 8px 10px;
+  font-weight: 600;
+  user-select: none;
+}
+
+.message-body .think-block > summary:hover {
+  color: #c8e1ff;
+}
+
+.message-body .think-content {
+  border-top: 1px solid #2f507f;
+  padding: 10px;
+  color: #c8d6ee;
+  line-height: 1.5;
+}
+
 .chat-form {
   border-top: 1px solid var(--line);
   background: var(--surface);

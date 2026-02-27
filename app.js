@@ -138,8 +138,21 @@ function escapeHtml(text) {
     .replaceAll("'", "&#39;");
 }
 
+function replaceThinkTagsWithDetails(text) {
+  const src = String(text ?? "");
+  return src.replace(/<think>([\s\S]*?)<\/think>/gi, (_, thinkBody) => {
+    const safeBody = escapeHtml(thinkBody.trim()).replaceAll("\n", "<br>");
+    return [
+      '<details class="think-block">',
+      "<summary>思考モードの内容</summary>",
+      `<div class="think-content">${safeBody || "(empty)"}</div>`,
+      "</details>",
+    ].join("\n");
+  });
+}
+
 function renderMarkdownSafe(content) {
-  const text = String(content ?? "");
+  const text = replaceThinkTagsWithDetails(content);
   if (!window.marked || !window.DOMPurify) {
     return escapeHtml(text).replaceAll("\n", "<br>");
   }
