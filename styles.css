@@ -39,6 +39,8 @@ body {
   background: var(--surface);
   display: flex;
   flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
 }
 
 .sidebar-header {
@@ -60,6 +62,7 @@ body {
   padding: 10px;
   overflow-y: auto;
   flex: 1;
+  min-height: 0;
 }
 
 .conversation-list li {
@@ -69,6 +72,9 @@ body {
   margin-bottom: 8px;
   cursor: pointer;
   background: #102142;
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .conversation-list li.active {
@@ -76,12 +82,30 @@ body {
   background: #163161;
 }
 
-.sidebar-footer {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 8px;
-  padding: 12px;
-  border-top: 1px solid var(--line);
+.conversation-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chat-delete-btn {
+  border: 1px solid #35598f;
+  border-radius: 6px;
+  padding: 3px 7px;
+  background: #11274a;
+  color: #d9e5fa;
+  line-height: 1;
+}
+
+.chat-delete-btn:hover {
+  background: #1d3a67;
+}
+
+.chat-delete-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 .main {

@@ -3,8 +3,6 @@ const STORAGE_KEY = "lmstudio-chat-state-v1";
 const el = {
   conversationList: document.getElementById("conversation-list"),
   newChatBtn: document.getElementById("new-chat-btn"),
-  deleteChatBtn: document.getElementById("delete-chat-btn"),
-  clearAllBtn: document.getElementById("clear-all-btn"),
   baseUrl: document.getElementById("base-url"),
   model: document.getElementById("model"),
   loadModelsBtn: document.getElementById("load-models-btn"),
@@ -108,10 +106,40 @@ function renderConversationList() {
     const li = document.createElement("li");
     li.dataset.id = c.id;
     li.classList.toggle("active", c.id === state.currentConversationId);
-    li.textContent = c.title || "Untitled";
     li.title = "ダブルクリックで名前変更";
+
+    const title = document.createElement("span");
+    title.className = "conversation-title";
+    title.textContent = c.title || "Untitled";
+
+    const del = document.createElement("button");
+    del.type = "button";
+    del.className = "chat-delete-btn";
+    del.dataset.id = c.id;
+    del.textContent = "🗑";
+    del.title = "この会話を削除";
+    del.ariaLabel = "この会話を削除";
+    if (state.conversations.length === 1) del.disabled = true;
+
+    li.appendChild(title);
+    li.appendChild(del);
     el.conversationList.appendChild(li);
   }
+}
+
+function deleteConversation(id) {
+  if (state.conversations.length === 1) {
+    setStatus("最後の会話は削除できません", true);
+    return;
+  }
+
+  state.conversations = state.conversations.filter((c) => c.id !== id);
+  if (!state.conversations.some((c) => c.id === state.currentConversationId)) {
+    state.currentConversationId = state.conversations[0].id;
+  }
+  saveState();
+  renderAll();
+  setStatus("会話を削除しました");
 }
 
 function renderMessages() {
@@ -321,29 +349,14 @@ function bindEvents() {
     renderAll();
   });
 
-  el.deleteChatBtn.addEventListener("click", () => {
-    if (state.conversations.length === 1) {
-      setStatus("最後の会話は削除できません", true);
+  el.conversationList.addEventListener("click", (e) => {
+    const deleteBtn = e.target.closest(".chat-delete-btn");
+    if (deleteBtn) {
+      e.stopPropagation();
+      deleteConversation(deleteBtn.dataset.id);
       return;
     }
 
-    state.conversations = state.conversations.filter((c) => c.id !== state.currentConversationId);
-    state.currentConversationId = state.conversations[0].id;
-    saveState();
-    renderAll();
-    setStatus("会話を削除しました");
-  });
-
-  el.clearAllBtn.addEventListener("click", () => {
-    const ok = confirm("すべての履歴を削除します。よろしいですか？");
-    if (!ok) return;
-    state = defaultState();
-    saveState();
-    renderAll();
-    setStatus("履歴を初期化しました");
-  });
-
-  el.conversationList.addEventListener("click", (e) => {
     const li = e.target.closest("li");
     if (!li) return;
     state.currentConversationId = li.dataset.id;
