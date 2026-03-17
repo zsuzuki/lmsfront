@@ -4,6 +4,7 @@ const path = require("path");
 
 const PORT = Number(process.env.PORT || 5173);
 const LM_STUDIO_BASE = (process.env.LM_STUDIO_BASE || "http://127.0.0.1:1234/v1").replace(/\/+$/, "");
+const LM_STUDIO_API_TOKEN = process.env.LMSCHAT_API_TOKEN || "";
 const ROOT = process.cwd();
 
 const MIME = {
@@ -43,8 +44,12 @@ async function proxyApi(req, res, pathname, search) {
     const headers = {};
     for (const [k, v] of Object.entries(req.headers)) {
       const key = k.toLowerCase();
-      if (key === "host" || key === "connection" || key === "content-length") continue;
+      if (key === "host" || key === "connection" || key === "content-length" || key === "authorization") continue;
       headers[k] = v;
+    }
+
+    if (LM_STUDIO_API_TOKEN) {
+      headers.Authorization = `Bearer ${LM_STUDIO_API_TOKEN}`;
     }
 
     const method = req.method || "GET";
@@ -106,4 +111,5 @@ const server = http.createServer(async (req, res) => {
 server.listen(PORT, () => {
   console.log(`Server: http://localhost:${PORT}`);
   console.log(`Proxy : /api/v1 -> ${LM_STUDIO_BASE}`);
+  console.log(`Auth  : ${LM_STUDIO_API_TOKEN ? "Bearer token enabled via LMSCHAT_API_TOKEN" : "disabled"}`);
 });
