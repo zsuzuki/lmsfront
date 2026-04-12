@@ -20,7 +20,7 @@
         <section class="config">
           <div class="config-row">
             <label for="base-url">Base URL</label>
-            <input id="base-url" type="text" placeholder="http://localhost:1234/v1" />
+            <input id="base-url" type="text" placeholder="http://localhost:1234/api/v1" />
           </div>
           <div class="config-row">
             <label for="model">Model</label>
@@ -42,12 +42,19 @@
         <section id="messages" class="messages"></section>
 
         <form id="chat-form" class="chat-form">
-          <textarea
-            id="user-input"
-            rows="3"
-            placeholder="メッセージを入力... (Shift+Enterで改行)"
-            required
-          ></textarea>
+          <input id="image-input" type="file" accept="image/*" multiple hidden />
+          <div class="chat-inputs">
+            <div class="chat-toolbar">
+              <button id="attach-image-btn" type="button">画像を追加</button>
+              <span id="vision-hint" class="vision-hint"></span>
+            </div>
+            <div id="composer-images" class="composer-images" hidden></div>
+            <textarea
+              id="user-input"
+              rows="3"
+              placeholder="メッセージを入力... (Shift+Enterで改行)"
+            ></textarea>
+          </div>
           <button id="send-btn" type="submit" class="primary">Send</button>
         </form>
       </main>
@@ -57,6 +64,7 @@
       <article class="message">
         <header></header>
         <div class="message-body"></div>
+        <div class="message-media"></div>
       </article>
     </template>
 

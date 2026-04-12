@@ -3,7 +3,7 @@ const fs = require("fs");
 const path = require("path");
 
 const PORT = Number(process.env.PORT || 5173);
-const LM_STUDIO_BASE = (process.env.LM_STUDIO_BASE || "http://127.0.0.1:1234/v1").replace(/\/+$/, "");
+const LM_STUDIO_BASE = normalizeLmStudioBase(process.env.LM_STUDIO_BASE || "http://127.0.0.1:1234/api/v1");
 const LM_STUDIO_API_TOKEN = process.env.LMSCHAT_API_TOKEN || "";
 const ROOT = process.cwd();
 
@@ -21,6 +21,17 @@ function send(res, status, body, contentType = "text/plain; charset=utf-8") {
     "Cache-Control": "no-store",
   });
   res.end(body);
+}
+
+function normalizeLmStudioBase(url) {
+  const trimmed = String(url || "").replace(/\/+$/, "");
+  if (trimmed.endsWith("/api/v1")) {
+    return trimmed;
+  }
+  if (trimmed.endsWith("/v1")) {
+    return `${trimmed.slice(0, -3)}/api/v1`;
+  }
+  return trimmed;
 }
 
 function mapFilePath(urlPath) {

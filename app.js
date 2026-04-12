@@ -11,6 +11,10 @@ const el = {
   status: document.getElementById("status"),
   messages: document.getElementById("messages"),
   chatForm: document.getElementById("chat-form"),
+  imageInput: document.getElementById("image-input"),
+  attachImageBtn: document.getElementById("attach-image-btn"),
+  composerImages: document.getElementById("composer-images"),
+  visionHint: document.getElementById("vision-hint"),
   userInput: document.getElementById("user-input"),
   sendBtn: document.getElementById("send-btn"),
   messageTemplate: document.getElementById("message-template"),
@@ -19,6 +23,23 @@ const el = {
 let state = loadState();
 let isSending = false;
 let isComposing = false;
+let composerImages = [];
+let modelCapabilities = {};
+
+const VISION_MODEL_PATTERNS = [
+  /\bllava\b/i,
+  /\bvision\b/i,
+  /\b(?:qwen|qwq)[\w.-]*-vl\b/i,
+  /\bminicpm[\w.-]*-v\b/i,
+  /\bphi[\w.-]*vision\b/i,
+  /\binternvl\b/i,
+  /\bpixtral\b/i,
+  /\bmolmo\b/i,
+  /\bidefics\b/i,
+  /\bglm-4v\b/i,
+  /\bllama-3\.2[\w.-]*vision\b/i,
+  /\bgemma-3\b/i,
+];
 
 function createConversation(title = "New Chat") {
   return {
@@ -27,6 +48,9 @@ function createConversation(title = "New Chat") {
     createdAt: Date.now(),
     updatedAt: Date.now(),
     messages: [],
+    lastResponseId: null,
+    lastModel: "",
+    lastSystemPrompt: "",
   };
 }
 
@@ -55,10 +79,22 @@ function loadState() {
     if (!parsed.settings.systemPrompt) parsed.settings.systemPrompt = "";
 
     // Migrate old direct-LM-Studio defaults to proxy path to avoid CORS in browsers.
-    const legacy = ["http://localhost:1234/v1", "http://127.0.0.1:1234/v1"];
+    const legacy = [
+      "http://localhost:1234/v1",
+      "http://127.0.0.1:1234/v1",
+      "http://localhost:1234/api/v1",
+      "http://127.0.0.1:1234/api/v1",
+    ];
     if (legacy.includes(parsed.settings.baseUrl.trim())) {
       parsed.settings.baseUrl = "/api/v1";
     }
+    parsed.conversations = parsed.conversations.map((conv) => ({
+      ...conv,
+      messages: Array.isArray(conv.messages) ? conv.messages.map(normalizeStoredMessage) : [],
+      lastResponseId: typeof conv.lastResponseId === "string" ? conv.lastResponseId : null,
+      lastModel: typeof conv.lastModel === "string" ? conv.lastModel : "",
+      lastSystemPrompt: typeof conv.lastSystemPrompt === "string" ? conv.lastSystemPrompt : "",
+    }));
     return parsed;
   } catch (err) {
     console.error(err);
@@ -67,7 +103,14 @@ function loadState() {
 }
 
 function saveState() {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    return true;
+  } catch (err) {
+    console.error(err);
+    setStatus("履歴保存に失敗しました。画像が大きすぎる可能性があります", true);
+    return false;
+  }
 }
 
 function currentConversation() {
@@ -88,12 +131,13 @@ function syncSettingsFromInputs() {
   state.settings.model = el.model.value.trim();
   state.settings.systemPrompt = el.systemPrompt.value;
   saveState();
+  updateVisionUi();
 }
 
 function normalizeFetchError(err) {
   const msg = err?.message || "unknown";
   if (msg === "Failed to fetch") {
-    return "Failed to fetch (CORS/Mixed Content/URL誤りの可能性)。`/api/v1` か `http://127.0.0.1:1234/v1` を試してください";
+    return "Failed to fetch (CORS/Mixed Content/URL誤りの可能性)。`/api/v1` か `http://127.0.0.1:1234/api/v1` を試してください";
   }
   return msg;
 }
@@ -148,9 +192,16 @@ function renderMessages() {
 
   for (const m of conv.messages) {
     const node = el.messageTemplate.content.firstElementChild.cloneNode(true);
+    const body = node.querySelector(".message-body");
+    const media = node.querySelector(".message-media");
     node.classList.add(m.role);
     node.querySelector("header").textContent = roleLabel(m.role);
-    node.querySelector(".message-body").innerHTML = renderMarkdownSafe(m.content);
+    const textContent = getMessageText(m);
+    const images = getMessageImages(m);
+
+    body.innerHTML = textContent ? renderMarkdownSafe(textContent) : "";
+    body.hidden = !textContent;
+    renderMessageImages(media, images);
     el.messages.appendChild(node);
   }
 
@@ -202,12 +253,14 @@ function renderSettings() {
   el.baseUrl.value = state.settings.baseUrl;
   el.model.value = state.settings.model;
   el.systemPrompt.value = state.settings.systemPrompt;
+  updateVisionUi();
 }
 
 function renderAll() {
   renderConversationList();
   renderMessages();
   renderSettings();
+  renderComposerImages();
 }
 
 function renameConversation(id) {
@@ -230,7 +283,7 @@ function addMessage(role, content) {
   conv.updatedAt = Date.now();
 
   if (role === "user" && conv.messages.length <= 2 && conv.title.startsWith("Chat")) {
-    const shortTitle = content.slice(0, 28);
+    const shortTitle = getMessageText({ content }).slice(0, 28) || `画像 ${getMessageImages({ content }).length} 枚`;
     conv.title = shortTitle || conv.title;
   }
 
@@ -238,21 +291,7 @@ function addMessage(role, content) {
   renderAll();
 }
 
-function buildApiMessages(conv) {
-  const messages = [];
-  const systemPrompt = state.settings.systemPrompt.trim();
-  if (systemPrompt) messages.push({ role: "system", content: systemPrompt });
-
-  for (const m of conv.messages) {
-    if (m.role === "user" || m.role === "assistant") {
-      messages.push({ role: m.role, content: m.content });
-    }
-  }
-
-  return messages;
-}
-
-async function sendMessage(text) {
+async function sendMessage(payload) {
   if (isSending) return;
   isSending = true;
   el.sendBtn.disabled = true;
@@ -260,7 +299,7 @@ async function sendMessage(text) {
 
   try {
     syncSettingsFromInputs();
-    addMessage("user", text);
+    addMessage("user", buildUserMessageContent(payload.text, payload.images));
 
     const baseUrl = sanitizeBaseUrl(state.settings.baseUrl.trim());
     if (!baseUrl) throw new Error("Base URL を入力してください");
@@ -269,14 +308,21 @@ async function sendMessage(text) {
     if (!model) throw new Error("Model を入力してください");
 
     const conv = currentConversation();
+    const systemPrompt = state.settings.systemPrompt.trim();
     const body = {
       model,
-      messages: buildApiMessages(conv),
+      input: buildNativeInput(payload.text, payload.images),
+      store: true,
       temperature: 0.7,
-      stream: false,
     };
+    const canContinue =
+      conv.lastResponseId && conv.lastModel === model && conv.lastSystemPrompt === systemPrompt;
+    if (systemPrompt) body.system_prompt = systemPrompt;
+    if (canContinue) {
+      body.previous_response_id = conv.lastResponseId;
+    }
 
-    const res = await fetch(`${baseUrl}/chat/completions`, {
+    const res = await fetch(`${baseUrl}/chat`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -290,13 +336,19 @@ async function sendMessage(text) {
     }
 
     const data = await res.json();
-    const reply = data?.choices?.[0]?.message?.content;
+    const reply = extractAssistantText(data?.output);
     if (!reply) throw new Error("レスポンスの形式が想定と異なります");
 
     addMessage("assistant", reply);
+    conv.lastResponseId = typeof data?.response_id === "string" ? data.response_id : conv.lastResponseId;
+    conv.lastModel = model;
+    conv.lastSystemPrompt = systemPrompt;
+    saveState();
     setStatus("送信完了");
   } catch (err) {
     console.error(err);
+    const conv = currentConversation();
+    conv.lastResponseId = null;
     const msg = normalizeFetchError(err);
     setStatus(msg, true);
     addMessage("system", `Error: ${msg}`);
@@ -304,6 +356,182 @@ async function sendMessage(text) {
     isSending = false;
     el.sendBtn.disabled = false;
   }
+}
+
+function normalizeStoredMessage(message) {
+  if (!message || typeof message !== "object") return { role: "system", content: "" };
+  if (typeof message.content === "string") return { role: message.role, content: message.content };
+  if (!Array.isArray(message.content)) return { role: message.role, content: "" };
+
+  const content = message.content
+    .map((part) => {
+      if (part?.type === "text") return { type: "text", text: String(part.text || "") };
+      if (part?.type === "image_url") {
+        const url = typeof part.image_url === "string" ? part.image_url : part.image_url?.url;
+        if (!url) return null;
+        return { type: "image_url", image_url: { url } };
+      }
+      return null;
+    })
+    .filter(Boolean);
+
+  return { role: message.role, content };
+}
+
+function buildUserMessageContent(text, images) {
+  const parts = [];
+  const trimmed = text.trim();
+  if (trimmed) parts.push({ type: "text", text: trimmed });
+  for (const image of images) {
+    parts.push({ type: "image_url", image_url: { url: image.dataUrl } });
+  }
+  return parts.length === 1 && parts[0].type === "text" ? parts[0].text : parts;
+}
+
+function getMessageText(message) {
+  if (typeof message.content === "string") return message.content;
+  if (!Array.isArray(message.content)) return "";
+  return message.content
+    .filter((part) => part?.type === "text")
+    .map((part) => part.text || "")
+    .join("\n")
+    .trim();
+}
+
+function getMessageImages(message) {
+  if (!Array.isArray(message.content)) return [];
+  return message.content
+    .filter((part) => part?.type === "image_url")
+    .map((part) => {
+      const url = typeof part.image_url === "string" ? part.image_url : part.image_url?.url;
+      return url ? { url } : null;
+    })
+    .filter(Boolean);
+}
+
+function buildNativeInput(text, images) {
+  const trimmed = text.trim();
+  if (images.length === 0) {
+    return trimmed;
+  }
+  const items = [];
+  if (trimmed) items.push({ type: "text", content: trimmed });
+  for (const image of images) {
+    items.push({ type: "image", data_url: image.dataUrl });
+  }
+  return items;
+}
+
+function extractAssistantText(output) {
+  if (!Array.isArray(output)) return "";
+  return output
+    .filter((item) => item?.type === "message" || item?.type === "reasoning")
+    .map((item) => {
+      if (item.type === "reasoning") return `<think>${item.content || ""}</think>`;
+      return item.content || "";
+    })
+    .filter(Boolean)
+    .join("\n\n")
+    .trim();
+}
+
+function renderMessageImages(container, images) {
+  container.innerHTML = "";
+  container.hidden = images.length === 0;
+  for (const image of images) {
+    const img = document.createElement("img");
+    img.src = image.url;
+    img.alt = "Attached image";
+    img.loading = "lazy";
+    container.appendChild(img);
+  }
+}
+
+function renderComposerImages() {
+  el.composerImages.innerHTML = "";
+  el.composerImages.hidden = composerImages.length === 0;
+
+  for (const image of composerImages) {
+    const item = document.createElement("div");
+    item.className = "composer-image";
+
+    const preview = document.createElement("img");
+    preview.src = image.dataUrl;
+    preview.alt = image.name;
+
+    const meta = document.createElement("div");
+    meta.className = "composer-image-meta";
+    meta.textContent = image.name;
+
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.className = "composer-image-remove";
+    remove.textContent = "削除";
+    remove.dataset.id = image.id;
+
+    item.appendChild(preview);
+    item.appendChild(meta);
+    item.appendChild(remove);
+    el.composerImages.appendChild(item);
+  }
+}
+
+function clearComposer() {
+  composerImages = [];
+  el.userInput.value = "";
+  el.imageInput.value = "";
+  renderComposerImages();
+}
+
+function modelSupportsImages(modelId) {
+  const value = String(modelId || "").trim();
+  if (!value) return false;
+  if (value in modelCapabilities) return Boolean(modelCapabilities[value]?.vision);
+  return VISION_MODEL_PATTERNS.some((pattern) => pattern.test(value));
+}
+
+function updateVisionUi() {
+  const supported = modelSupportsImages(el.model.value);
+  el.attachImageBtn.disabled = !supported;
+  if (supported) {
+    el.visionHint.textContent = "画像入力対応モデルとして扱います";
+  } else {
+    el.visionHint.textContent = "画像入力は視覚対応モデル名を入力すると有効になります";
+  }
+}
+
+async function readImageFile(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () =>
+      resolve({
+        id: crypto.randomUUID(),
+        name: file.name,
+        dataUrl: reader.result,
+      });
+    reader.onerror = () => reject(new Error(`${file.name} の読み込みに失敗しました`));
+    reader.readAsDataURL(file);
+  });
+}
+
+async function addComposerImages(files) {
+  if (!modelSupportsImages(el.model.value)) {
+    setStatus("現在のモデルは画像入力非対応として扱っています", true);
+    return;
+  }
+
+  const nextImages = [];
+  for (const file of files) {
+    if (!file.type.startsWith("image/")) {
+      setStatus(`${file.name} は画像ファイルではありません`, true);
+      continue;
+    }
+    nextImages.push(await readImageFile(file));
+  }
+
+  composerImages = [...composerImages, ...nextImages];
+  renderComposerImages();
+  setStatus(nextImages.length ? `${nextImages.length} 枚の画像を追加しました` : el.status.textContent, false);
 }
 
 async function loadModels() {
@@ -319,13 +547,19 @@ async function loadModels() {
     const res = await fetch(`${baseUrl}/models`);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
-    const models = Array.isArray(data?.data) ? data.data : [];
+    const models = Array.isArray(data?.models) ? data.models.filter((model) => model.type === "llm") : [];
+    modelCapabilities = {};
 
     el.modelsSelect.innerHTML = '<option value="">モデルを選択（任意）</option>';
     for (const m of models) {
       const opt = document.createElement("option");
-      opt.value = m.id;
-      opt.textContent = m.id;
+      const modelId = m.key || m.id;
+      const vision = m.capabilities?.vision;
+      modelCapabilities[modelId] = {
+        vision: Boolean(vision),
+      };
+      opt.value = modelId;
+      opt.textContent = `${m.display_name || modelId}${vision ? " [vision]" : ""}`;
       el.modelsSelect.appendChild(opt);
     }
 
@@ -346,6 +580,7 @@ function bindEvents() {
     state.conversations.push(next);
     state.currentConversationId = next.id;
     saveState();
+    clearComposer();
     renderAll();
   });
 
@@ -361,6 +596,7 @@ function bindEvents() {
     if (!li) return;
     state.currentConversationId = li.dataset.id;
     saveState();
+    clearComposer();
     renderAll();
   });
 
@@ -372,10 +608,11 @@ function bindEvents() {
 
   el.chatForm.addEventListener("submit", async (e) => {
     e.preventDefault();
-    const text = el.userInput.value.trim();
-    if (!text) return;
-    el.userInput.value = "";
-    await sendMessage(text);
+    const text = el.userInput.value;
+    const images = [...composerImages];
+    if (!text.trim() && images.length === 0) return;
+    clearComposer();
+    await sendMessage({ text, images });
   });
 
   el.userInput.addEventListener("keydown", (e) => {
@@ -394,6 +631,29 @@ function bindEvents() {
     isComposing = false;
   });
 
+  el.attachImageBtn.addEventListener("click", () => {
+    if (el.attachImageBtn.disabled) return;
+    el.imageInput.click();
+  });
+
+  el.imageInput.addEventListener("change", async () => {
+    try {
+      await addComposerImages(Array.from(el.imageInput.files || []));
+    } catch (err) {
+      console.error(err);
+      setStatus(normalizeFetchError(err), true);
+    } finally {
+      el.imageInput.value = "";
+    }
+  });
+
+  el.composerImages.addEventListener("click", (e) => {
+    const button = e.target.closest(".composer-image-remove");
+    if (!button) return;
+    composerImages = composerImages.filter((image) => image.id !== button.dataset.id);
+    renderComposerImages();
+  });
+
   for (const input of [el.baseUrl, el.model, el.systemPrompt]) {
     input.addEventListener("change", syncSettingsFromInputs);
     input.addEventListener("input", syncSettingsFromInputs);
@@ -406,6 +666,7 @@ function bindEvents() {
     el.model.value = el.modelsSelect.value;
     state.settings.model = el.modelsSelect.value;
     saveState();
+    updateVisionUi();
   });
 }
 
