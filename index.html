@@ -18,24 +18,32 @@
 
       <main class="main">
         <section class="config">
-          <div class="config-row">
-            <label for="base-url">Base URL</label>
-            <input id="base-url" type="text" placeholder="http://localhost:1234/api/v1" />
-          </div>
-          <div class="config-row">
-            <label for="model">Model</label>
-            <div class="model-row">
-              <input id="model" type="text" placeholder="モデル名 (例: local-model)" />
-              <button id="load-models-btn">Load Models</button>
+          <details id="config-details" class="config-details" open>
+            <summary class="config-summary">
+              <span>Settings</span>
+              <span id="config-summary-text"></span>
+            </summary>
+            <div class="config-fields">
+              <div class="config-row">
+                <label for="base-url">Base URL</label>
+                <input id="base-url" type="text" placeholder="/api/v1" />
+              </div>
+              <div class="config-row">
+                <label for="model">Model</label>
+                <div class="model-row">
+                  <input id="model" type="text" placeholder="モデル名 (例: local-model)" />
+                  <button id="load-models-btn">Load Models</button>
+                </div>
+                <select id="models-select">
+                  <option value="">モデルを選択（任意）</option>
+                </select>
+              </div>
+              <div class="config-row">
+                <label for="system-prompt">System Prompt</label>
+                <textarea id="system-prompt" rows="2" placeholder="必要ならシステムプロンプトを入力"></textarea>
+              </div>
             </div>
-            <select id="models-select">
-              <option value="">モデルを選択（任意）</option>
-            </select>
-          </div>
-          <div class="config-row">
-            <label for="system-prompt">System Prompt</label>
-            <textarea id="system-prompt" rows="2" placeholder="必要ならシステムプロンプトを入力"></textarea>
-          </div>
+          </details>
           <div id="status" class="status"></div>
         </section>
 

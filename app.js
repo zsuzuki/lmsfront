@@ -3,6 +3,8 @@ const STORAGE_KEY = "lmstudio-chat-state-v1";
 const el = {
   conversationList: document.getElementById("conversation-list"),
   newChatBtn: document.getElementById("new-chat-btn"),
+  configDetails: document.getElementById("config-details"),
+  configSummaryText: document.getElementById("config-summary-text"),
   baseUrl: document.getElementById("base-url"),
   model: document.getElementById("model"),
   loadModelsBtn: document.getElementById("load-models-btn"),
@@ -41,9 +43,38 @@ const VISION_MODEL_PATTERNS = [
   /\bgemma-3\b/i,
 ];
 
+const IMAGE_MAX_EDGE = 1600;
+const IMAGE_JPEG_QUALITY = 0.82;
+
+function createId() {
+  if (globalThis.crypto?.randomUUID) {
+    return globalThis.crypto.randomUUID();
+  }
+
+  const bytes = new Uint8Array(16);
+  if (globalThis.crypto?.getRandomValues) {
+    globalThis.crypto.getRandomValues(bytes);
+  } else {
+    for (let i = 0; i < bytes.length; i += 1) {
+      bytes[i] = Math.floor(Math.random() * 256);
+    }
+  }
+
+  bytes[6] = (bytes[6] & 0x0f) | 0x40;
+  bytes[8] = (bytes[8] & 0x3f) | 0x80;
+  const hex = [...bytes].map((byte) => byte.toString(16).padStart(2, "0"));
+  return [
+    hex.slice(0, 4).join(""),
+    hex.slice(4, 6).join(""),
+    hex.slice(6, 8).join(""),
+    hex.slice(8, 10).join(""),
+    hex.slice(10, 16).join(""),
+  ].join("-");
+}
+
 function createConversation(title = "New Chat") {
   return {
-    id: crypto.randomUUID(),
+    id: createId(),
     title,
     createdAt: Date.now(),
     updatedAt: Date.now(),
@@ -131,15 +162,50 @@ function syncSettingsFromInputs() {
   state.settings.model = el.model.value.trim();
   state.settings.systemPrompt = el.systemPrompt.value;
   saveState();
+  updateConfigSummary();
   updateVisionUi();
 }
 
 function normalizeFetchError(err) {
   const msg = err?.message || "unknown";
+  if (err?.name === "AbortError" || msg === "Fetch is aborted" || msg === "The operation was aborted.") {
+    return "リクエストがタイムアウトしました。モデルの応答に時間がかかっている可能性があります";
+  }
   if (msg === "Failed to fetch") {
     return "Failed to fetch (CORS/Mixed Content/URL誤りの可能性)。`/api/v1` か `http://127.0.0.1:1234/api/v1` を試してください";
   }
   return msg;
+}
+
+function formatApiError(status, bodyText) {
+  let message = bodyText.trim();
+  try {
+    const parsed = JSON.parse(bodyText);
+    message = parsed?.error?.message || parsed?.message || message;
+    if (parsed?.error?.code === "invalid_api_key") {
+      return `HTTP ${status}: LM Studio の API トークンが必要です。サーバー起動時に LMSCHAT_API_TOKEN を設定してください`;
+    }
+  } catch {
+    // Keep the original response text when it is not JSON.
+  }
+  return `HTTP ${status}${message ? `: ${message.slice(0, 240)}` : ""}`;
+}
+
+async function fetchJson(url, options = {}) {
+  const { timeoutMs = 15000, ...fetchOptions } = options;
+  const controller = new AbortController();
+  const timeout = timeoutMs > 0 ? setTimeout(() => controller.abort(), timeoutMs) : null;
+  try {
+    const res = await fetch(url, {
+      ...fetchOptions,
+      signal: fetchOptions.signal || controller.signal,
+    });
+    const text = await res.text();
+    if (!res.ok) throw new Error(formatApiError(res.status, text));
+    return text ? JSON.parse(text) : null;
+  } finally {
+    if (timeout) clearTimeout(timeout);
+  }
 }
 
 function renderConversationList() {
@@ -253,6 +319,7 @@ function renderSettings() {
   el.baseUrl.value = state.settings.baseUrl;
   el.model.value = state.settings.model;
   el.systemPrompt.value = state.settings.systemPrompt;
+  updateConfigSummary();
   updateVisionUi();
 }
 
@@ -322,20 +389,14 @@ async function sendMessage(payload) {
       body.previous_response_id = conv.lastResponseId;
     }
 
-    const res = await fetch(`${baseUrl}/chat`, {
+    const data = await fetchJson(`${baseUrl}/chat`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
       },
       body: JSON.stringify(body),
+      timeoutMs: 10 * 60 * 1000,
     });
-
-    if (!res.ok) {
-      const textErr = await res.text();
-      throw new Error(`API Error ${res.status}: ${textErr.slice(0, 240)}`);
-    }
-
-    const data = await res.json();
     const reply = extractAssistantText(data?.output);
     if (!reply) throw new Error("レスポンスの形式が想定と異なります");
 
@@ -500,18 +561,61 @@ function updateVisionUi() {
   }
 }
 
-async function readImageFile(file) {
+function updateConfigSummary() {
+  const model = state.settings.model.trim() || "No model";
+  const baseUrl = state.settings.baseUrl.trim() || "No URL";
+  el.configSummaryText.textContent = `${model} - ${baseUrl}`;
+}
+
+function formatBytes(bytes) {
+  if (!Number.isFinite(bytes) || bytes <= 0) return "";
+  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)}KB`;
+  return `${(bytes / 1024 / 1024).toFixed(1)}MB`;
+}
+
+function loadImageElement(url) {
   return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () =>
-      resolve({
-        id: crypto.randomUUID(),
-        name: file.name,
-        dataUrl: reader.result,
-      });
-    reader.onerror = () => reject(new Error(`${file.name} の読み込みに失敗しました`));
-    reader.readAsDataURL(file);
+    const img = new Image();
+    img.onload = () => resolve(img);
+    img.onerror = () => reject(new Error("画像の読み込みに失敗しました"));
+    img.src = url;
   });
+}
+
+async function readImageFile(file) {
+  const objectUrl = URL.createObjectURL(file);
+  try {
+    const img = await loadImageElement(objectUrl);
+    const sourceWidth = img.naturalWidth || img.width;
+    const sourceHeight = img.naturalHeight || img.height;
+    if (!sourceWidth || !sourceHeight) {
+      throw new Error(`${file.name} の画像サイズを取得できませんでした`);
+    }
+
+    const scale = Math.min(1, IMAGE_MAX_EDGE / Math.max(sourceWidth, sourceHeight));
+    const width = Math.max(1, Math.round(sourceWidth * scale));
+    const height = Math.max(1, Math.round(sourceHeight * scale));
+    const canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = height;
+
+    const ctx = canvas.getContext("2d");
+    if (!ctx) throw new Error("画像変換に失敗しました");
+    ctx.drawImage(img, 0, 0, width, height);
+
+    const dataUrl = canvas.toDataURL("image/jpeg", IMAGE_JPEG_QUALITY);
+    const encodedSize = Math.round((dataUrl.length * 3) / 4);
+    const original = formatBytes(file.size);
+    const resized = formatBytes(encodedSize);
+
+    return {
+      id: createId(),
+      name: `${file.name}${original && resized ? ` (${original} -> ${resized})` : ""}`,
+      dataUrl,
+    };
+  } finally {
+    URL.revokeObjectURL(objectUrl);
+  }
 }
 
 async function addComposerImages(files) {
@@ -526,27 +630,33 @@ async function addComposerImages(files) {
       setStatus(`${file.name} は画像ファイルではありません`, true);
       continue;
     }
+    setStatus(`${file.name} を縮小しています...`);
     nextImages.push(await readImageFile(file));
   }
 
   composerImages = [...composerImages, ...nextImages];
   renderComposerImages();
-  setStatus(nextImages.length ? `${nextImages.length} 枚の画像を追加しました` : el.status.textContent, false);
+  setStatus(
+    nextImages.length
+      ? `${nextImages.length} 枚の画像を追加しました（長辺最大 ${IMAGE_MAX_EDGE}px に縮小）`
+      : el.status.textContent,
+    false,
+  );
 }
 
 async function loadModels() {
   syncSettingsFromInputs();
   setStatus("モデル一覧を取得中...");
+  el.loadModelsBtn.disabled = true;
   const baseUrl = sanitizeBaseUrl(state.settings.baseUrl.trim());
   if (!baseUrl) {
     setStatus("Base URL を入力してください", true);
+    el.loadModelsBtn.disabled = false;
     return;
   }
 
   try {
-    const res = await fetch(`${baseUrl}/models`);
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const data = await res.json();
+    const data = await fetchJson(`${baseUrl}/models`);
     const models = Array.isArray(data?.models) ? data.models.filter((model) => model.type === "llm") : [];
     modelCapabilities = {};
 
@@ -571,6 +681,8 @@ async function loadModels() {
   } catch (err) {
     console.error(err);
     setStatus(`モデル取得失敗: ${normalizeFetchError(err)} (URL: ${baseUrl}/models)`, true);
+  } finally {
+    el.loadModelsBtn.disabled = false;
   }
 }
 
@@ -666,10 +778,18 @@ function bindEvents() {
     el.model.value = el.modelsSelect.value;
     state.settings.model = el.modelsSelect.value;
     saveState();
+    updateConfigSummary();
     updateVisionUi();
   });
 }
 
+function initializeResponsiveConfig() {
+  if (window.matchMedia("(max-width: 960px)").matches) {
+    el.configDetails.open = false;
+  }
+}
+
+initializeResponsiveConfig();
 bindEvents();
 renderAll();
 setStatus("Ready");

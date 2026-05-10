@@ -1,10 +1,12 @@
 const http = require("http");
 const fs = require("fs");
+const os = require("os");
 const path = require("path");
 
 const PORT = Number(process.env.PORT || 5173);
+const HOST = process.env.HOST || "0.0.0.0";
 const LM_STUDIO_BASE = normalizeLmStudioBase(process.env.LM_STUDIO_BASE || "http://127.0.0.1:1234/api/v1");
-const LM_STUDIO_API_TOKEN = process.env.LMSCHAT_API_TOKEN || "";
+const LM_STUDIO_API_TOKEN = process.env.LMSCHAT_API_TOKEN || process.env.LM_STUDIO_API_TOKEN || process.env.LM_API_TOKEN || "";
 const ROOT = process.cwd();
 
 const MIME = {
@@ -32,6 +34,13 @@ function normalizeLmStudioBase(url) {
     return `${trimmed.slice(0, -3)}/api/v1`;
   }
   return trimmed;
+}
+
+function getLanAddresses() {
+  return Object.values(os.networkInterfaces())
+    .flat()
+    .filter((iface) => iface && iface.family === "IPv4" && !iface.internal)
+    .map((iface) => iface.address);
 }
 
 function mapFilePath(urlPath) {
@@ -119,8 +128,12 @@ const server = http.createServer(async (req, res) => {
   });
 });
 
-server.listen(PORT, () => {
+server.listen(PORT, HOST, () => {
   console.log(`Server: http://localhost:${PORT}`);
+  for (const address of getLanAddresses()) {
+    console.log(`LAN   : http://${address}:${PORT}`);
+  }
+  console.log(`Bind  : ${HOST}`);
   console.log(`Proxy : /api/v1 -> ${LM_STUDIO_BASE}`);
-  console.log(`Auth  : ${LM_STUDIO_API_TOKEN ? "Bearer token enabled via LMSCHAT_API_TOKEN" : "disabled"}`);
+  console.log(`Auth  : ${LM_STUDIO_API_TOKEN ? "Bearer token enabled" : "disabled"}`);
 });
