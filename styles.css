@@ -559,7 +559,13 @@ button:disabled {
 
   .chat-form {
     grid-template-columns: 1fr;
-    padding: 10px;
+    padding: 10px 14px calc(14px + env(safe-area-inset-bottom, 0px));
+  }
+
+  #send-btn {
+    justify-self: center;
+    width: calc(100% - 12px);
+    margin-bottom: 4px;
   }
 
   .chat-toolbar {
